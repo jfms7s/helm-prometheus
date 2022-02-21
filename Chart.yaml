@@ -1,0 +1,13 @@
+apiVersion: v2
+name: argo-cd
+version: 1.0.0
+dependencies:
+  - name: kube-prometheus-stack
+    version: 32.2.0
+    repository: https://prometheus-community.github.io/helm-charts
+    alias: metrics
+
+  - name: loki-stack
+    version: 2.6.1
+    repository: https://grafana.github.io/helm-charts
+    alias: logs

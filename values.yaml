@@ -1,0 +1,237 @@
+
+metrics:
+  defaultRules:
+    create: true
+    rules:
+      alertmanager: true
+      etcd: true
+      configReloaders: true
+      general: true
+      k8s: true
+      kubeApiserver: true
+      kubeApiserverAvailability: true
+      kubeApiserverSlos: true
+      kubelet: true
+      kubeProxy: true
+      kubePrometheusGeneral: true
+      kubePrometheusNodeRecording: true
+      kubernetesApps: true
+      kubernetesResources: true
+      kubernetesStorage: true
+      kubernetesSystem: true
+      kubeScheduler: true
+      kubeStateMetrics: true
+      network: true
+      node: true
+      nodeExporterAlerting: true
+      nodeExporterRecording: true
+      prometheus: true
+      prometheusOperator: true
+
+  alertmanager:
+
+    enabled: false
+
+  ## Using default values from https://github.com/grafana/helm-charts/blob/main/charts/grafana/values.yaml
+  ##
+  grafana:
+    enabled: true
+    
+    ## ForceDeployDatasources Create datasource configmap even if grafana deployment has been disabled
+    forceDeployDatasources: false
+
+    ## ForceDeployDashboard Create dashboard configmap even if grafana deployment has been disabled
+    forceDeployDashboards: false
+
+    ## Deploy default dashboards
+    defaultDashboardsEnabled: true
+
+    adminPassword: prom-operator
+
+    ingress:
+      enabled: true
+
+      hosts: 
+        - grafana.k3s.home
+
+      path: /
+
+  persistence:
+    type: pvc
+    enabled: true
+    storageClassName: nfs-client
+    accessModes:
+      - ReadWriteOnce
+    size: 10Gi
+    finalizers:
+      - kubernetes.io/pvc-protection
+
+
+
+  kubeApiServer:
+    enabled: true
+
+  kubelet:
+    enabled: true
+    namespace: kube-system
+
+  ## Component scraping the kube controller manager
+  ##
+  kubeControllerManager:
+    enabled: true
+
+  ## Component scraping coreDns. Use either this or kubeDns
+  ##
+  coreDns:
+    enabled: true
+
+  ## Component scraping kubeDns. Use either this or coreDns
+  ##
+  kubeDns:
+    enabled: false
+
+  ## Component scraping etcd
+  ##
+  kubeEtcd:
+    enabled: true
+
+  ## Component scraping kube scheduler
+  ##
+  kubeScheduler:
+    enabled: true
+
+  ## Component scraping kube proxy
+  ##
+  kubeProxy:
+    enabled: true
+
+  ## Component scraping kube state metrics
+  ##
+  kubeStateMetrics:
+    enabled: true
+
+  ## Deploy node exporter as a daemonset to all nodes
+  ##
+  nodeExporter:
+    enabled: true
+
+  ## Manages Prometheus and Alertmanager components
+  ##
+  prometheusOperator:
+    enabled: true
+
+  prometheus:
+
+    enabled: true
+
+    ingress:
+      enabled: true
+
+      hosts:
+        - prometheus.k3s.home
+
+      path: /
+
+logs:
+  loki:
+    enabled: true
+
+  promtail:
+    enabled: true
+
+  fluent-bit:
+    enabled: false
+
+  grafana:
+    enabled: false
+  prometheus:
+    enabled: false
+
+  filebeat:
+    enabled: false
+    filebeatConfig:
+      filebeat.yml: |
+        # logging.level: debug
+        filebeat.inputs:
+        - type: container
+          paths:
+            - /var/log/containers/*.log
+          processors:
+          - add_kubernetes_metadata:
+              host: ${NODE_NAME}
+              matchers:
+              - logs_path:
+                  logs_path: "/var/log/containers/"
+        output.logstash:
+          hosts: ["logstash-loki:5044"]
+
+  logstash:
+    enabled: false
+    image: grafana/logstash-output-loki
+    imageTag: 1.0.1
+    filters:
+      main: |-
+        filter {
+          if [kubernetes] {
+            mutate {
+              add_field => {
+                "container_name" => "%{[kubernetes][container][name]}"
+                "namespace" => "%{[kubernetes][namespace]}"
+                "pod" => "%{[kubernetes][pod][name]}"
+              }
+              replace => { "host" => "%{[kubernetes][node][name]}"}
+            }
+          }
+          mutate {
+            remove_field => ["tags"]
+          }
+        }
+    outputs:
+      main: |-
+        output {
+          loki {
+            url => "http://loki:3100/loki/api/v1/push"
+            #username => "test"
+            #password => "test"
+          }
+          # stdout { codec => rubydebug }
+        }
+
+
+  extraScrapeConfigs:
+    - job_name: journal
+      journal:
+        path: /var/log/journal
+        max_age: 12h
+        labels:
+          job: systemd-journal
+      relabel_configs:
+        - source_labels: ['__journal__systemd_unit']
+          target_label: 'unit'
+        - source_labels: ['__journal__hostname']
+          target_label: 'hostname'
+
+    - job_name: syslog
+      syslog:
+        listen_address: 0.0.0.0:1514
+        labels:
+          job: "syslog"
+      relabel_configs:
+        - source_labels: ['__syslog_message_hostname']
+          target_label: 'host'
+
+  # Mount journal directory into Promtail pods
+  extraVolumes:
+    - name: journal
+      hostPath:
+        path: /var/log/journal
+
+  extraVolumeMounts:
+    - name: journal
+      mountPath: /var/log/journal
+      readOnly: true
+
+  syslogService:
+    enabled: true
+    type: LoadBalancer
+    port: 1514
